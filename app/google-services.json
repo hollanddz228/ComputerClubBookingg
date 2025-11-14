@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "86546325009",
+    "project_id": "computerclubbooking-23e52",
+    "storage_bucket": "computerclubbooking-23e52.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:86546325009:android:54b45e3bb57f402c0f9bb0",
+        "android_client_info": {
+          "package_name": "com.example.computerclubbooking"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7dAXrfQhWkw0tGq80U4xBPJ2e1HkshAw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
