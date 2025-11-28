@@ -35,12 +35,29 @@ fun BookingDialog(
     var showSmsDialog by remember { mutableStateOf(false) }
     var smsCode by remember { mutableStateOf("") }
 
-    // Время бронирования
-    var selectedDate by remember { mutableStateOf(Calendar.getInstance()) }
-    var selectedHour by remember { mutableStateOf(Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) }
-    var selectedMinute by remember { mutableStateOf(0) }
+    // 🔥 ИСПРАВЛЕНО: Инициализация времени с учетом часового пояса
+    val localTimeZone = TimeZone.getDefault()
 
-    // 🔥 НЕОНОВАЯ АНИМАЦИЯ
+    var selectedHour by remember {
+        mutableStateOf(
+            Calendar.getInstance(localTimeZone).let { cal ->
+                val currentHour = cal.get(Calendar.HOUR_OF_DAY)
+                if (currentHour >= 23) 8 else currentHour + 1
+            }
+        )
+    }
+    var selectedMinute by remember { mutableStateOf(0) }
+    var selectedDate by remember {
+        mutableStateOf(
+            Calendar.getInstance(localTimeZone).apply {
+                if (get(Calendar.HOUR_OF_DAY) >= 23) {
+                    add(Calendar.DAY_OF_MONTH, 1)
+                }
+            }
+        )
+    }
+
+    // Категория и анимация
     val categoryColor = when(computer.category) {
         "ВИП" -> Color(0xFFFFD700) to Color(0xFFFFA500)
         "Bootcamp" -> Color(0xFF00FF00) to Color(0xFF00CC00)
@@ -62,20 +79,21 @@ fun BookingDialog(
         listOf(categoryColor.first.copy(alpha = glowAlpha), categoryColor.second)
     )
 
-    // Обновляем время при выборе пакета
+    // 🔥 ИСПРАВЛЕНО: Обработка выбора ночного пакета
     LaunchedEffect(selectedPackage) {
         selectedPackage?.let { pkg ->
             if (pkg.isNightPackage) {
                 selectedHour = 22
                 selectedMinute = 0
-                val calendar = Calendar.getInstance()
-                calendar.set(Calendar.HOUR_OF_DAY, 22)
-                calendar.set(Calendar.MINUTE, 0)
-                if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) >= 22) {
-                    calendar.add(Calendar.DAY_OF_MONTH, 1)
+
+                // Устанавливаем дату на сегодня если еще не 22:00, иначе на завтра
+                selectedDate = Calendar.getInstance().apply {
+                    if (get(Calendar.HOUR_OF_DAY) >= 22) {
+                        add(Calendar.DAY_OF_MONTH, 1)
+                    }
                 }
-                selectedDate = calendar
             }
+            // 🔥 ВАЖНО: Для обычных пакетов НЕ сбрасываем время
         }
     }
 
@@ -85,13 +103,17 @@ fun BookingDialog(
             onSmsCodeChange = { smsCode = it },
             onVerify = {
                 selectedPackage?.let { pkg ->
-                    // Устанавливаем выбранное время
+                    // 🔥 ИСПРАВЛЕНО: Правильное создание Calendar
                     val bookingTime = Calendar.getInstance().apply {
-                        time = selectedDate.time
+                        timeInMillis = selectedDate.timeInMillis
                         set(Calendar.HOUR_OF_DAY, selectedHour)
                         set(Calendar.MINUTE, selectedMinute)
                         set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
                     }
+
+                    println("🔍 Бронируем: ${SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(bookingTime.time)}")
+
                     onConfirm(pkg, bookingTime)
                     showSmsDialog = false
                 }
@@ -153,14 +175,7 @@ fun BookingDialog(
                                 PackageItem(
                                     timePackage = pkg,
                                     isSelected = selectedPackage == pkg,
-                                    onSelect = {
-                                        selectedPackage = pkg
-                                        // Для ночного пакета автоматически ставим 22:00
-                                        if (pkg.isNightPackage) {
-                                            selectedHour = 22
-                                            selectedMinute = 0
-                                        }
-                                    },
+                                    onSelect = { selectedPackage = pkg },
                                     categoryColor = categoryColor.second
                                 )
                             }
@@ -198,14 +213,27 @@ fun BookingDialog(
                         Text("Час:", color = Color(0xFFB0C4DE))
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        // Горизонтальный список часов
+                        // 🔥 ИСПРАВЛЕНО: Проверка доступности часов
+                        val currentTime = Calendar.getInstance()
+                        val isToday = selectedDate.get(Calendar.DAY_OF_YEAR) == currentTime.get(Calendar.DAY_OF_YEAR) &&
+                                selectedDate.get(Calendar.YEAR) == currentTime.get(Calendar.YEAR)
+
                         LazyRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items((8..23).toList()) { hour ->
                                 val isSelected = selectedHour == hour
-                                val isDisabled = selectedPackage?.isNightPackage == true && hour != 22
+                                val isNightPackageSelected = selectedPackage?.isNightPackage == true
+
+                                // 🔥 ИСПРАВЛЕНО: Логика блокировки часов
+                                val isDisabled = when {
+                                    // Для ночного пакета доступен только 22:00
+                                    isNightPackageSelected && hour != 22 -> true
+                                    // Для обычных пакетов блокируем прошедшие часы только если выбран сегодняшний день
+                                    !isNightPackageSelected && isToday && hour <= currentTime.get(Calendar.HOUR_OF_DAY) -> true
+                                    else -> false
+                                }
 
                                 Box(
                                     modifier = Modifier
@@ -218,6 +246,9 @@ fun BookingDialog(
                                             shape = CircleShape
                                         )
                                         .padding(12.dp)
+                                        .clickable(enabled = !isDisabled) {
+                                            selectedHour = hour
+                                        }
                                 ) {
                                     Text(
                                         text = "$hour:00",
@@ -226,15 +257,20 @@ fun BookingDialog(
                                             isDisabled -> Color.Gray
                                             else -> Color.White
                                         },
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        modifier = Modifier.clickable(enabled = !isDisabled) {
-                                            if (!isDisabled) {
-                                                selectedHour = hour
-                                            }
-                                        }
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                     )
                                 }
                             }
+                        }
+
+                        // 🔥 Информация о выборе для ночного пакета
+                        if (selectedPackage?.isNightPackage == true) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "🌙 Ночной пакет доступен только с 22:00",
+                                color = Color(0xFFFFA500),
+                                fontSize = 12.sp
+                            )
                         }
 
                         // Информация о бронировании
@@ -242,12 +278,13 @@ fun BookingDialog(
                             Spacer(modifier = Modifier.height(16.dp))
 
                             val startCalendar = Calendar.getInstance().apply {
-                                time = selectedDate.time
+                                timeInMillis = selectedDate.timeInMillis
                                 set(Calendar.HOUR_OF_DAY, selectedHour)
                                 set(Calendar.MINUTE, selectedMinute)
+                                set(Calendar.SECOND, 0)
                             }
                             val endCalendar = startCalendar.clone() as Calendar
-                            endCalendar.add(Calendar.HOUR, pkg.hours)
+                            endCalendar.add(Calendar.HOUR_OF_DAY, pkg.hours)
 
                             val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
                             val dateFormat = SimpleDateFormat("dd.MM", Locale.getDefault())

@@ -198,6 +198,8 @@ fun MainScreen(
 // Карточка ПК 💻
 // Карточка ПК 💻
 // Карточка ПК 💻
+// 🔥 ЗАМЕНИ ФУНКЦИЮ ComputerCard в твоем MainScreen.kt на эту:
+
 @Composable
 fun ComputerCard(
     computer: Computer,
@@ -208,6 +210,10 @@ fun ComputerCard(
     val bookingEndTime = bookingViewModel.getBookingEndTime(computer.id)
 
     val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+    // 🔥 ИСПРАВЛЕНО: Используем локальное время для расчета
+    val currentTime = Calendar.getInstance().timeInMillis
+
     val statusText = if (!isBooked && computer.isAvailable) {
         "Свободен ✅"
     } else if (isBooked && bookingEndTime != null) {
@@ -241,17 +247,13 @@ fun ComputerCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 🔥 Иконка с индикатором статуса
+            // Иконка
             Box(contentAlignment = Alignment.Center) {
                 Image(
                     painter = painterResource(id = R.drawable.ic_computer),
                     contentDescription = "ПК",
                     modifier = Modifier.size(48.dp)
                 )
-                // Самое простое решение - убрать красную точку
-                if (isBooked) {
-                    // Просто оставляем иконку без дополнительных индикаторов
-                }
             }
 
             Text(
@@ -268,7 +270,7 @@ fun ComputerCard(
                 maxLines = 2
             )
 
-            // 🔥 Статус с временем окончания
+            // Статус
             Text(
                 text = statusText,
                 color = statusColor,
@@ -276,16 +278,23 @@ fun ComputerCard(
                 fontWeight = FontWeight.Medium
             )
 
-            // 🔥 Дополнительная информация для занятых компьютеров
+            // 🔥 ИСПРАВЛЕНО: Оставшееся время с учетом часового пояса
             if (isBooked && bookingEndTime != null) {
-                val timeLeft = bookingEndTime.time - System.currentTimeMillis()
-                val hoursLeft = timeLeft / (1000 * 60 * 60)
-                val minutesLeft = (timeLeft % (1000 * 60 * 60)) / (1000 * 60)
+                val timeLeft = bookingEndTime.time - currentTime
 
-                if (hoursLeft > 0 || minutesLeft > 0) {
+                if (timeLeft > 0) {
+                    val hoursLeft = timeLeft / (1000 * 60 * 60)
+                    val minutesLeft = (timeLeft % (1000 * 60 * 60)) / (1000 * 60)
+
                     Text(
                         text = "Осталось: ${hoursLeft}ч ${minutesLeft}м",
                         color = Color(0xFFFFA500),
+                        fontSize = 10.sp
+                    )
+                } else {
+                    Text(
+                        text = "Истекло ⏰",
+                        color = Color.Red,
                         fontSize = 10.sp
                     )
                 }

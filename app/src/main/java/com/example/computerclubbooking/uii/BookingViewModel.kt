@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -30,10 +31,16 @@ data class Booking(
     val startTime: Timestamp = Timestamp.now(),
     val endTime: Timestamp = Timestamp.now(),
     val createdAt: Timestamp = Timestamp.now(),
-    val status: String = "active",
+    val status: String = "active", // active, completed, cancelled
     val totalPrice: Double = 0.0,
     val timePackage: String = ""
 )
+
+sealed class BookingResult {
+    data class Success(val message: String) : BookingResult()
+    data class Failure(val message: String) : BookingResult()
+    object InProgress : BookingResult()
+}
 
 class BookingViewModel(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
@@ -71,6 +78,52 @@ class BookingViewModel(
 
     init {
         loadActiveBookings()
+        startExpiredBookingsCleanup() // 🔥 АВТОМАТИЧЕСКАЯ ОЧИСТКА
+    }
+
+    // 🔥 НОВАЯ ФУНКЦИЯ: Автоматическая очистка истекших броней
+    private fun startExpiredBookingsCleanup() {
+        viewModelScope.launch {
+            while (true) {
+                delay(30000) // Проверяем каждые 30 секунд
+                cleanupExpiredBookings()
+            }
+        }
+    }
+
+    // 🔥 НОВАЯ ФУНКЦИЯ: Очистка истекших броней
+    private suspend fun cleanupExpiredBookings() {
+        try {
+            val now = Timestamp.now()
+
+            // Находим все активные брони, которые истекли
+            val expiredBookings = db.collection("bookings")
+                .whereEqualTo("status", "active")
+                .whereLessThan("endTime", now)
+                .get()
+                .await()
+
+            println("🧹 Найдено истекших броней: ${expiredBookings.documents.size}")
+
+            // Обновляем каждую истекшую бронь
+            expiredBookings.documents.forEach { doc ->
+                val computerId = doc.getString("computerId") ?: return@forEach
+
+                db.runTransaction { transaction ->
+                    // Обновляем статус брони на "completed"
+                    val bookingRef = db.collection("bookings").document(doc.id)
+                    transaction.update(bookingRef, "status", "completed")
+
+                    // Освобождаем компьютер
+                    val computerRef = db.collection("computers").document(computerId)
+                    transaction.update(computerRef, "isAvailable", true)
+                }.await()
+
+                println("✅ Компьютер $computerId освобожден")
+            }
+        } catch (e: Exception) {
+            println("❌ Ошибка очистки: ${e.message}")
+        }
     }
 
     private fun loadActiveBookings() {
@@ -84,37 +137,38 @@ class BookingViewModel(
                     }
 
                     try {
-                        val bookingsMap = snapshot?.documents?.associate { doc ->
-                            val computerId = doc.getString("computerId") ?: ""
+                        val currentTime = System.currentTimeMillis()
 
-                            // 🔥 БЕЗОПАСНОЕ ПОЛУЧЕНИЕ TIMESTAMP
-                            val startTime = try {
-                                doc.getTimestamp("startTime") ?: Timestamp.now()
+                        val bookingsMap = snapshot?.documents?.mapNotNull { doc ->
+                            try {
+                                val computerId = doc.getString("computerId") ?: return@mapNotNull null
+
+                                val startTime = doc.getTimestamp("startTime") ?: Timestamp.now()
+                                val endTime = doc.getTimestamp("endTime") ?: Timestamp.now()
+
+                                // 🔥 ПРОВЕРКА: Пропускаем истекшие брони
+                                if (endTime.toDate().time < currentTime) {
+                                    println("⏰ Бронь ${doc.id} истекла, пропускаем")
+                                    return@mapNotNull null
+                                }
+
+                                computerId to Booking(
+                                    id = doc.id,
+                                    computerId = computerId,
+                                    computerName = doc.getString("computerName") ?: "",
+                                    computerCategory = doc.getString("computerCategory") ?: "",
+                                    userEmail = doc.getString("userEmail") ?: "",
+                                    userId = doc.getString("userId") ?: "",
+                                    startTime = startTime,
+                                    endTime = endTime,
+                                    totalPrice = doc.getDouble("totalPrice") ?: 0.0,
+                                    timePackage = doc.getString("timePackage") ?: ""
+                                )
                             } catch (e: Exception) {
-                                println("⚠️ Invalid startTime in booking ${doc.id}")
-                                Timestamp.now()
+                                println("⚠️ Ошибка обработки брони ${doc.id}: ${e.message}")
+                                null
                             }
-
-                            val endTime = try {
-                                doc.getTimestamp("endTime") ?: Timestamp.now()
-                            } catch (e: Exception) {
-                                println("⚠️ Invalid endTime in booking ${doc.id}")
-                                Timestamp.now()
-                            }
-
-                            computerId to Booking(
-                                id = doc.id,
-                                computerId = computerId,
-                                computerName = doc.getString("computerName") ?: "",
-                                computerCategory = doc.getString("computerCategory") ?: "",
-                                userEmail = doc.getString("userEmail") ?: "",
-                                userId = doc.getString("userId") ?: "",
-                                startTime = startTime,
-                                endTime = endTime,
-                                totalPrice = doc.getDouble("totalPrice") ?: 0.0,
-                                timePackage = doc.getString("timePackage") ?: ""
-                            )
-                        } ?: emptyMap()
+                        }?.toMap() ?: emptyMap()
 
                         _activeBookings.value = bookingsMap
 
@@ -146,8 +200,22 @@ class BookingViewModel(
             _bookingState.value = BookingResult.InProgress
 
             try {
-                val startCalendar = selectedStartTime.clone() as Calendar
-                val endCalendar = selectedStartTime.clone() as Calendar
+                // 🔥 ИСПРАВЛЕНО: Используем локальный часовой пояс
+                val localTimeZone = TimeZone.getDefault()
+
+                val startCalendar = Calendar.getInstance(localTimeZone).apply {
+                    timeInMillis = selectedStartTime.timeInMillis
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+
+                val endCalendar = Calendar.getInstance(localTimeZone).apply {
+                    timeInMillis = startCalendar.timeInMillis
+                    add(Calendar.HOUR_OF_DAY, timePackage.hours)
+                }
+
+                println("🕐 Локальное время начала: ${SimpleDateFormat("dd.MM.yyyy HH:mm z", Locale.getDefault()).format(startCalendar.time)}")
+                println("🕐 Локальное время окончания: ${SimpleDateFormat("dd.MM.yyyy HH:mm z", Locale.getDefault()).format(endCalendar.time)}")
 
                 // Для ночного пакета проверяем время начала
                 if (timePackage.isNightPackage) {
@@ -158,20 +226,17 @@ class BookingViewModel(
                     }
                 }
 
-                // Устанавливаем время окончания
-                endCalendar.add(Calendar.HOUR, timePackage.hours)
-
                 val startTime = startCalendar.time
                 val endTime = endCalendar.time
 
                 // Проверка на корректность времени
-                val now = Calendar.getInstance()
-                if (startTime.before(now.time)) {
+                val now = System.currentTimeMillis()
+                if (startTime.time < now) {
                     _bookingState.value = BookingResult.Failure("❌ Нельзя бронировать на прошедшее время")
                     return@launch
                 }
 
-                // 🔥 УПРОЩЕННАЯ ПРОВЕРКА ПЕРЕСЕЧЕНИЙ (без сложных запросов)
+                // 🔥 УПРОЩЕННАЯ ПРОВЕРКА ПЕРЕСЕЧЕНИЙ
                 val activeBookings = db.collection("bookings")
                     .whereEqualTo("computerId", computerId)
                     .whereEqualTo("status", "active")
@@ -234,7 +299,15 @@ class BookingViewModel(
     }
 
     fun isComputerBooked(computerId: String): Boolean {
-        return _activeBookings.value.containsKey(computerId)
+        val booking = _activeBookings.value[computerId]
+        if (booking != null) {
+            // Проверяем, не истекла ли бронь
+            val now = System.currentTimeMillis()
+            if (booking.endTime.toDate().time < now) {
+                return false // Бронь истекла
+            }
+        }
+        return booking != null
     }
 
     fun clearState() {
