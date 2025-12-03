@@ -1,4 +1,4 @@
-package com.example.computerclubbooking.uii
+package com.example.computerclubbooking.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState

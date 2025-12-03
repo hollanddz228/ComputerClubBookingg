@@ -42,7 +42,7 @@ android {
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.15"
+        kotlinCompilerExtensionVersion = "1.7.0"
     }
 
     buildToolsVersion = "35.0.0"
@@ -61,7 +61,7 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3:1.3.0")
+    implementation("androidx.compose.material3:material3")
 
     // 🔥 НОВОЕ - для расширенных иконок
     implementation("androidx.compose.material:material-icons-extended:1.7.3")
@@ -89,6 +89,22 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.json:json:20240303")
     implementation(libs.androidx.compose.foundation)
+
+    // Безопасное хранилище (EncryptedSharedPreferences)
+    implementation("androidx.security:security-crypto:1.0.0")
+
+// Gson для сохранения списка аккаунтов в JSON
+    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("androidx.compose.foundation:foundation:1.7.3")
+
+    // Lottie animations
+    implementation("com.airbnb.android:lottie-compose:6.3.0")
+
+// DataStore
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
 
     // --- Testing ---
     testImplementation("junit:junit:4.13.2")

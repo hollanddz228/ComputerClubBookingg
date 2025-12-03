@@ -1,4 +1,4 @@
-package com.example.computerclubbooking.uii
+package com.example.computerclubbooking.uii.profile
 
 import android.net.Uri
 import android.widget.Toast
@@ -47,6 +47,7 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -108,7 +109,7 @@ fun ProfileScreen(
             .build()
 
         client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: java.io.IOException) {
+            override fun onFailure(call: Call, e: IOException) {
                 coroutineScope.launch {
                     Toast.makeText(context, "Ошибка загрузки: ${e.message}", Toast.LENGTH_LONG).show()
                 }

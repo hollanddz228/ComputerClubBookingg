@@ -1,4 +1,4 @@
-package com.example.computerclubbooking
+package com.example.computerclubbooking.uii.home
 
 import android.widget.Toast
 import androidx.compose.foundation.Image
@@ -12,7 +12,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -20,14 +19,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import com.example.computerclubbooking.uii.BookingViewModel
+import com.example.computerclubbooking.R
+import com.example.computerclubbooking.data.models.Booking
+import com.example.computerclubbooking.uii.booking.BookingDialog
+import com.example.computerclubbooking.uii.BookingResult
+import com.example.computerclubbooking.uii.booking.BookingViewModel
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -48,19 +51,17 @@ class MainViewModel : ViewModel() {
     val computers: StateFlow<List<Computer>> = _computers
 
     init {
-        viewModelScope.launch {
-            db.collection("computers").addSnapshotListener { snapshot, error ->
-                if (error != null) return@addSnapshotListener
-                _computers.value = snapshot?.documents?.map { doc ->
-                    Computer(
-                        id = doc.id,
-                        name = doc.getString("name") ?: "PC",
-                        description = doc.getString("description") ?: "",
-                        category = doc.getString("category") ?: "Стандарт",
-                        isAvailable = doc.getBoolean("isAvailable") ?: true
-                    )
-                } ?: emptyList()
-            }
+        db.collection("computers").addSnapshotListener { snapshot, error ->
+            if (error != null) return@addSnapshotListener
+            _computers.value = snapshot?.documents?.map { doc ->
+                Computer(
+                    id = doc.id,
+                    name = doc.getString("name") ?: "PC",
+                    description = doc.getString("description") ?: "",
+                    category = doc.getString("category") ?: "Стандарт",
+                    isAvailable = doc.getBoolean("isAvailable") ?: true
+                )
+            } ?: emptyList()
         }
     }
 }
@@ -70,8 +71,8 @@ class MainViewModel : ViewModel() {
 @Composable
 fun MainScreen(
     navController: NavHostController,
-    mainViewModel: MainViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
-    bookingViewModel: BookingViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    mainViewModel: MainViewModel = viewModel(),
+    bookingViewModel: BookingViewModel = viewModel()
 ) {
     val computers by mainViewModel.computers.collectAsState()
     val bookingState by bookingViewModel.bookingState.collectAsState()
@@ -90,17 +91,17 @@ fun MainScreen(
     // 🎯 Реакция на результат брони
     LaunchedEffect(bookingState) {
         when (val state = bookingState) {
-            is com.example.computerclubbooking.uii.BookingResult.Success -> {
-                Toast.makeText(context, "✅ ${state.message}", Toast.LENGTH_SHORT).show()
+            is BookingResult.Success -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
                 selectedComputer = null
                 bookingViewModel.clearState()
             }
-            is com.example.computerclubbooking.uii.BookingResult.Failure -> {
-                Toast.makeText(context, "❌ ${state.message}", Toast.LENGTH_SHORT).show()
+            is BookingResult.Failure -> {
+                Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
                 bookingViewModel.clearState()
             }
-            is com.example.computerclubbooking.uii.BookingResult.InProgress -> {
-                // Показываем загрузку если нужно
+            is BookingResult.InProgress -> {
+                // можно показать лоадер
             }
             else -> {}
         }
@@ -141,6 +142,7 @@ fun MainScreen(
         },
         containerColor = Color(0xFF0D1117)
     ) { padding ->
+
         val filteredComputers = computers.filter { it.category == selectedCategory }
 
         LazyVerticalGrid(
@@ -154,14 +156,21 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(filteredComputers) { computer ->
+                val bookingForPc = activeBookings[computer.id]
                 ComputerCard(
                     computer = computer,
-                    bookingViewModel = bookingViewModel,
+                    booking = bookingForPc,
                     onBookClick = {
-                        if (computer.isAvailable && !bookingViewModel.isComputerBooked(computer.id)) {
-                            selectedComputer = computer
-                        } else {
+                        if (!computer.isAvailable) {
                             Toast.makeText(context, "Этот компьютер занят ❌", Toast.LENGTH_SHORT).show()
+                        } else if (bookingForPc != null) {
+                            Toast.makeText(context, "Этот компьютер уже забронирован ❌", Toast.LENGTH_SHORT).show()
+                        } else {
+                            if (user != null) {
+                                selectedComputer = computer
+                            } else {
+                                Toast.makeText(context, "Войдите в аккаунт", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 )
@@ -170,7 +179,7 @@ fun MainScreen(
 
         // 💡 Диалог бронирования
         selectedComputer?.let { computer ->
-            com.example.computerclubbooking.uii.BookingDialog(
+            BookingDialog(
                 computer = computer,
                 bookingViewModel = bookingViewModel,
                 onConfirm = { timePackage, startTime ->
@@ -182,7 +191,7 @@ fun MainScreen(
                             computerName = computer.name,
                             computerCategory = computer.category,
                             timePackage = timePackage,
-                            selectedStartTime = startTime
+                            desiredStartTime = startTime   // новое имя параметра
                         )
                     } else {
                         Toast.makeText(context, "Ошибка: войдите в аккаунт", Toast.LENGTH_SHORT).show()
@@ -194,32 +203,26 @@ fun MainScreen(
     }
 }
 
-// Карточка ПК 💻
-// Карточка ПК 💻
-// Карточка ПК 💻
-// Карточка ПК 💻
-// 🔥 ЗАМЕНИ ФУНКЦИЮ ComputerCard в твоем MainScreen.kt на эту:
-
 @Composable
 fun ComputerCard(
     computer: Computer,
-    bookingViewModel: BookingViewModel,
+    booking: Booking?,
     onBookClick: () -> Unit
 ) {
-    val isBooked = bookingViewModel.isComputerBooked(computer.id)
-    val bookingEndTime = bookingViewModel.getBookingEndTime(computer.id)
+    val isBooked = booking != null
+    val endTime: Timestamp? = booking?.endTime
 
-    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val timeFormat = remember {
+        SimpleDateFormat("HH:mm", Locale("ru")).apply {
+            timeZone = TimeZone.getTimeZone("Asia/Almaty")
+        }
+    }
 
-    // 🔥 ИСПРАВЛЕНО: Используем локальное время для расчета
-    val currentTime = Calendar.getInstance().timeInMillis
 
-    val statusText = if (!isBooked && computer.isAvailable) {
-        "Свободен ✅"
-    } else if (isBooked && bookingEndTime != null) {
-        "Занят до ${timeFormat.format(bookingEndTime)} ❌"
-    } else {
-        "Занят ❌"
+    val statusText = when {
+        !isBooked && computer.isAvailable -> "Свободен ✅"
+        isBooked && endTime != null -> "Занят до ${timeFormat.format(endTime.toDate())} ❌"
+        else -> "Занят ❌"
     }
 
     val statusColor = if (!isBooked && computer.isAvailable) {
@@ -238,7 +241,6 @@ fun ComputerCard(
             containerColor = if (isBooked) Color(0xFF2A1F1F) else Color(0xFF161B22)
         ),
         elevation = CardDefaults.cardElevation(6.dp),
-        border = if (isBooked) CardDefaults.outlinedCardBorder() else null
     ) {
         Column(
             modifier = Modifier
@@ -247,14 +249,11 @@ fun ComputerCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Иконка
-            Box(contentAlignment = Alignment.Center) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_computer),
-                    contentDescription = "ПК",
-                    modifier = Modifier.size(48.dp)
-                )
-            }
+            Image(
+                painter = painterResource(id = R.drawable.ic_computer),
+                contentDescription = "ПК",
+                modifier = Modifier.size(48.dp)
+            )
 
             Text(
                 text = computer.name,
@@ -270,7 +269,6 @@ fun ComputerCard(
                 maxLines = 2
             )
 
-            // Статус
             Text(
                 text = statusText,
                 color = statusColor,
@@ -278,13 +276,12 @@ fun ComputerCard(
                 fontWeight = FontWeight.Medium
             )
 
-            // 🔥 ИСПРАВЛЕНО: Оставшееся время с учетом часового пояса
-            if (isBooked && bookingEndTime != null) {
-                val timeLeft = bookingEndTime.time - currentTime
-
-                if (timeLeft > 0) {
-                    val hoursLeft = timeLeft / (1000 * 60 * 60)
-                    val minutesLeft = (timeLeft % (1000 * 60 * 60)) / (1000 * 60)
+            // Осталось времени
+            if (isBooked && endTime != null) {
+                val remainingSeconds = endTime.seconds - Timestamp.now().seconds
+                if (remainingSeconds > 0) {
+                    val hoursLeft = remainingSeconds / 3600
+                    val minutesLeft = (remainingSeconds % 3600) / 60
 
                     Text(
                         text = "Осталось: ${hoursLeft}ч ${minutesLeft}м",

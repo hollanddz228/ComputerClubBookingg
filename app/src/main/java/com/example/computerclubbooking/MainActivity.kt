@@ -1,5 +1,8 @@
 package com.example.computerclubbooking
 
+import com.example.computerclubbooking.data.models.SavedAccount
+import com.example.computerclubbooking.data.models.managers.SavedAccountsManager
+import com.google.firebase.firestore.FirebaseFirestore
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -23,9 +26,20 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.*
+
 import com.example.computerclubbooking.uii.*
+import com.example.computerclubbooking.uii.auth.AuthScreen
+import com.example.computerclubbooking.uii.auth.VerifyScreen
+import com.example.computerclubbooking.uii.booking.BookingsScreen
+import com.example.computerclubbooking.uii.home.MainScreen
+import com.example.computerclubbooking.uii.profile.ProfileScreen
+
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+
+import com.example.computerclubbooking.uii.tutorial.AppPreferences
+import com.example.computerclubbooking.uii.tutorial.TutorialScreen
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -37,11 +51,17 @@ class MainActivity : ComponentActivity() {
         auth = FirebaseAuth.getInstance()
 
         setContent {
+
             val navController = rememberNavController()
+
+            // Смотрим, был ли показан туториал
+            val tutorialShown by AppPreferences
+                .isTutorialShown(this)
+                .collectAsState(initial = false)
+
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
 
-            // 🔹 Фон в стиле PS5 (тёмный + неоновый градиент)
             val neonGradient = Brush.linearGradient(
                 colors = listOf(
                     Color(0xFF001F3F),
@@ -50,11 +70,14 @@ class MainActivity : ComponentActivity() {
                 )
             )
 
+            val appScope = rememberCoroutineScope()
+            val context = this@MainActivity
+
             MaterialTheme {
                 Scaffold(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(neonGradient), // Убираем белую полоску сверху
+                        .background(neonGradient),
                     containerColor = Color.Transparent,
                     contentColor = Color.White,
                     bottomBar = {
@@ -63,29 +86,124 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 ) { paddingValues ->
+
                     NavHost(
                         navController = navController,
+                        // ВСЕГДА начинаем с auth, а не tutorial
                         startDestination = "auth",
                         modifier = Modifier.padding(paddingValues)
                     ) {
-                        // 🔹 Авторизация
+
+                        // ---------- TUTORIAL ----------
+                        composable("tutorial") {
+                            TutorialScreen(
+                                onFinish = {
+                                    appScope.launch {
+                                        AppPreferences.setTutorialShown(context, true)
+                                        navController.navigate("main") {
+                                            popUpTo("auth") { inclusive = true }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+
+                        // ---------- AUTH ----------
                         composable("auth") {
+
+                            val db = FirebaseFirestore.getInstance()
+
                             AuthScreen(
-                                onLoginClick = { email, password ->
+                                onLoginClick = { email, password, remember ->
+
                                     auth.signInWithEmailAndPassword(email, password)
                                         .addOnCompleteListener { task ->
+
                                             if (task.isSuccessful) {
-                                                Toast.makeText(
-                                                    this@MainActivity,
-                                                    "Добро пожаловать!",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                                navController.navigate("main") {
-                                                    popUpTo("auth") { inclusive = true }
+                                                val user = auth.currentUser
+                                                if (user != null) {
+
+                                                    val docId = user.email ?: user.uid
+
+                                                    db.collection("users")
+                                                        .document(docId)
+                                                        .get()
+                                                        .addOnSuccessListener { doc ->
+
+                                                            val displayName =
+                                                                doc.getString("name")
+                                                                    ?: user.email?.substringBefore("@")
+                                                                    ?: email
+
+                                                            val avatarUrl =
+                                                                doc.getString("avatarUrl")
+
+                                                            if (remember) {
+                                                                val account = SavedAccount(
+                                                                    email = user.email ?: email,
+                                                                    displayName = displayName,
+                                                                    avatarUrl = avatarUrl,
+                                                                    password = password
+                                                                )
+
+                                                                SavedAccountsManager.saveOrUpdateAccount(
+                                                                    context,
+                                                                    account
+                                                                )
+                                                            }
+
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Добро пожаловать, $displayName!",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+
+                                                            // ➜ после логина решаем: tutorial или main
+                                                            if (!tutorialShown) {
+                                                                navController.navigate("tutorial") {
+                                                                    popUpTo("auth") { inclusive = true }
+                                                                }
+                                                            } else {
+                                                                navController.navigate("main") {
+                                                                    popUpTo("auth") { inclusive = true }
+                                                                }
+                                                            }
+                                                        }
+                                                        .addOnFailureListener {
+
+                                                            val displayName =
+                                                                user.email?.substringBefore("@")
+                                                                    ?: email
+
+                                                            if (remember) {
+                                                                val account = SavedAccount(
+                                                                    email = user.email ?: email,
+                                                                    displayName = displayName,
+                                                                    avatarUrl = null,
+                                                                    password = password
+                                                                )
+
+                                                                SavedAccountsManager.saveOrUpdateAccount(
+                                                                    context,
+                                                                    account
+                                                                )
+                                                            }
+
+                                                            if (!tutorialShown) {
+                                                                navController.navigate("tutorial") {
+                                                                    popUpTo("auth") { inclusive = true }
+                                                                }
+                                                            } else {
+                                                                navController.navigate("main") {
+                                                                    popUpTo("auth") { inclusive = true }
+                                                                }
+                                                            }
+                                                        }
                                                 }
+
                                             } else {
                                                 Toast.makeText(
-                                                    this@MainActivity,
+                                                    context,
                                                     "Ошибка входа: ${task.exception?.message}",
                                                     Toast.LENGTH_LONG
                                                 ).show()
@@ -97,7 +215,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 🔹 Регистрация
+                        // ---------- REGISTER ----------
                         composable("register") {
                             RegisterScreen(
                                 onRegisterClick = { email, password ->
@@ -105,15 +223,17 @@ class MainActivity : ComponentActivity() {
                                         .addOnCompleteListener { task ->
                                             if (task.isSuccessful) {
                                                 auth.currentUser?.sendEmailVerification()
+
                                                 Toast.makeText(
-                                                    this@MainActivity,
-                                                    "Аккаунт создан! Проверь почту для подтверждения.",
+                                                    context,
+                                                    "Аккаунт создан! Подтверди почту.",
                                                     Toast.LENGTH_LONG
                                                 ).show()
+
                                                 navController.navigate("verify")
                                             } else {
                                                 Toast.makeText(
-                                                    this@MainActivity,
+                                                    context,
                                                     "Ошибка: ${task.exception?.message}",
                                                     Toast.LENGTH_LONG
                                                 ).show()
@@ -124,13 +244,12 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 🔹 Подтверждение почты
                         composable("verify") {
                             VerifyScreen(
                                 onVerified = {
                                     Toast.makeText(
-                                        this@MainActivity,
-                                        "Почта подтверждена! Добро пожаловать!",
+                                        context,
+                                        "Почта подтверждена!",
                                         Toast.LENGTH_SHORT
                                     ).show()
                                     navController.navigate("main")
@@ -139,7 +258,6 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 🔹 Сброс пароля
                         composable("sbros") {
                             SbrosScreen(
                                 onContinueToParol = { navController.navigate("parol") },
@@ -147,12 +265,11 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 🔹 Смена пароля
                         composable("parol") {
                             ParolScreen(
                                 onPasswordChanged = {
                                     Toast.makeText(
-                                        this@MainActivity,
+                                        context,
                                         "Пароль успешно изменён!",
                                         Toast.LENGTH_LONG
                                     ).show()
@@ -162,9 +279,9 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 🔹 Главные вкладки
                         composable("main") { MainScreen(navController) }
                         composable("bookings") { BookingsScreen() }
+
                         composable("profile") {
                             ProfileScreen(
                                 onLogout = {
@@ -185,11 +302,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ------------------------
-// 🔹 Нижнее меню с glow-эффектом
-// ------------------------
+// ------------------------------------------------------
+// 🔥 НИЖНЕЕ МЕНЮ
+// ------------------------------------------------------
 @Composable
 fun BottomNavigationBar(navController: NavController, currentRoute: String?) {
+
     val items = listOf(
         NavItem("main", "Главная", Icons.Default.Home),
         NavItem("bookings", "Брони", Icons.Default.List),
@@ -219,7 +337,6 @@ fun BottomNavigationBar(navController: NavController, currentRoute: String?) {
                         item.icon,
                         contentDescription = item.label,
                         tint = if (selected) Color(0xFF00C6FF) else Color(0xFFB0B0B0),
-                        modifier = Modifier
                     )
                 },
                 label = {
@@ -239,9 +356,6 @@ fun BottomNavigationBar(navController: NavController, currentRoute: String?) {
     }
 }
 
-// ------------------------
-// 🔹 Модель нижнего пункта
-// ------------------------
 data class NavItem(
     val route: String,
     val label: String,
